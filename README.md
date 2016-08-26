@@ -18,7 +18,7 @@ The complete list of options are:
 Example: **`ihex myfile.hex --oh`**
 >4. **`--ah`** > Append hex file with the current hex file. Example: **`ihex myfile.hex --ah newfile_to_append.hex`**
 >5. **`--ab`** > Append binary file with the current hex file. New records will actually be created on the current hex file just so it can fit the new binary data. Example: **`ihex myfile.hex --ab mybinary_to_append.bin`**
->6. **`-c`** > Convert binary file into hex file. Example: **`ihex -c mybin.bin`** By using the -c flag, the program will use the binary as if it was the original hex file that was being passed originally without any flag.
+>6. **`-c`** > Convert a binary file into hex file. Example: **`ihex -c mybin.bin`** By using the -c flag, the program will use the binary as if it was the original hex file that was being passed originally without any flag.
 
 * Remember that you can combine these flags. For example, if you wish to append one hex file and a binary into the original file, and want to get the result exported into a new file, just do:  
 **`ihex myfile.hex --ab mybinary.bin --ah anotherhex.hex --oh`**
