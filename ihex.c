@@ -31,10 +31,10 @@ typedef struct ihex {
 	uint32_t record_count;
 } __attribute__((packed)) ihex_t;
 
-char * strdup (const char * s) {
+char * strdup(const char * s) {
 	char * d = (char*)malloc(strlen(s) + 1);
 	if (!d) return NULL;
-	strcpy (d, s);
+	strcpy(d, s);
 	return d;
 }
 
@@ -71,7 +71,7 @@ uint16_t address_off(char * ihex, uint32_t colon_off) {
 	four_digits[2] = *(pos + 3);
 	four_digits[3] = *(pos + 4);
 	four_digits[4] = '\0';
-	return (uint8_t)strtol(four_digits, NULL, 16);
+	return (uint16_t)strtol(four_digits, NULL, 16);
 }
 
 uint8_t type_off(char * ihex, uint32_t colon_off) {
@@ -210,7 +210,7 @@ void dump_ihex(ihex_t * ihex) {
 		printf("\n\t* Record %d:\n\t\t- Data: ", i + 1);
 		for(int j = 0; j < rec->byte_count; j++)
 			printf("%02X%s", rec->data[j], j < rec->byte_count - 1 ? "," : "");
-		printf("\n\t\t- Size: %d (decimal)\n\t\t- Address: %02X\n\t\t- Type: %s (%d)\n\t\t- Checksum: %02X = %s", rec->byte_count, rec->address,
+		printf("\n\t\t- Size: %d (decimal)\n\t\t- Address: %04X\n\t\t- Type: %s (%d)\n\t\t- Checksum: %02X = %s", rec->byte_count, rec->address,
 			rec->type_str, rec->type, rec->checksum, rec->checksum_valid ? "VALID" : "INVALID");
 		if(!rec->checksum_valid)
 			printf(" (calc: %02X)", rec->checksum_calc);
@@ -234,13 +234,95 @@ void free_ihex(ihex_t * ihex) {
 	ihex = 0;
 }
 
+uint32_t ihex_total_size(ihex_t * ihex) {
+	uint32_t hex_str_size = 0;
+	for(int i = 0; i < ihex->record_count; i++)
+		hex_str_size += 1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2;
+	return hex_str_size;
+}
+
+char * ihex_to_str(ihex_t * ihex) {
+	uint32_t hex_str_size = ihex_total_size(ihex);
+
+	char * hex_str = (char*)malloc(hex_str_size);
+	memset(hex_str, 0, hex_str_size);
+
+	for(int i = 0; i < ihex->record_count; i++) {
+		char * single_rec = malloc(1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2);
+		char * data_str = malloc(ihex->record_list[i].byte_count*2+1);
+		memset(data_str, 1, ihex->record_list[i].byte_count*2+1);
+		for(int j = 0, k = 0; k < ihex->record_list[i].byte_count; j += 2, k++) {
+			char two_digits[3];
+			sprintf(two_digits, "%02X", ihex->record_list[i].data[k]);
+			data_str[j] = two_digits[0];
+			data_str[j+1] = two_digits[1];
+		}
+		data_str[ihex->record_list[i].byte_count*2] = '\0';
+		sprintf(single_rec, ":%02X%04X%02X%s%02X\r\n", ihex->record_list[i].byte_count, ihex->record_list[i].address, ihex->record_list[i].type, data_str, ihex->record_list[i].checksum);
+		strcat(hex_str, single_rec);
+
+		free(data_str);
+		free(single_rec);
+	}
+	return hex_str;	
+}
+
+ihex_t * bin_to_ihex(char * bin_str, uint32_t bin_strlen) {
+	if(!bin_strlen) return 0;
+	ihex_t * bin_ihex = 0;
+	uint32_t record_count = ((bin_strlen-1) / 16) + 2;
+	
+	bin_ihex = (ihex_t*)malloc(sizeof(ihex_t));
+	bin_ihex->record_count = record_count;
+	bin_ihex->record_list = (record_t*)malloc(sizeof(record_t) * record_count);
+	for(int s = 0, acc = 0, bin_rec = 0; s < bin_strlen; s++) {
+		if(++acc == 16 || s == bin_strlen - 1) {
+			record_t * rec = &bin_ihex->record_list[bin_rec];
+
+			rec->byte_count = acc;
+			rec->address = !bin_rec ? 0 : bin_ihex->record_list[bin_rec - 1].address + bin_ihex->record_list[bin_rec - 1].byte_count + 13;
+			rec->type = REC_TYPE_DATA;
+			rec->type_str = strdup("Data");
+
+			rec->data = (uint8_t*)malloc(sizeof(uint8_t) * acc);
+			memcpy(rec->data, bin_str + (s-acc) + 1, acc);
+
+			uint8_t data_sum = 0;
+			for(int di = 0; di < rec->byte_count; di++)
+				data_sum += rec->data[di];
+			rec->checksum      = ~(rec->byte_count + ((rec->address & 0xFF00) >> 8) + (rec->address & 0xFF) + rec->type + data_sum) + 1;
+			rec->checksum_calc = rec->checksum;
+			rec->checksum_valid = 1;
+
+			bin_rec++;
+			acc = 0;
+		}
+	}
+	/* Create EOF record: */
+	record_t * rec = &bin_ihex->record_list[record_count - 1];
+	rec->byte_count = 0;
+	rec->address = 0;
+	rec->type = REC_TYPE_EOF;
+	rec->type_str = strdup("End Of File");
+
+	rec->data = 0;
+
+	rec->checksum      =  0xFF;
+	rec->checksum_calc = rec->checksum_calc;
+	rec->checksum_valid = 1;
+
+	free(bin_str);
+	return bin_ihex;
+}
+
 void help() {
 	printf("\n> Usage: ihex hexfile.hex [options]\n> Options:\n\
    1: -h Show Help\n\
    2: --ob Output binary data into file 'hexfile.bin'\n\
    3: --oh Output hexadecimal file into a copy file, whether the original hex file was altered or not\n\
-   4: --ab Append binary file into the hex file\n\
-   5: --ah Append hex file into the current hex file");
+   4: --ab <binfile> Append binary file into the hex file\n\
+   5: --ah <hexfile> Append hex file into the current hex file\n\
+   6: -c <binfile> Convert binary file into hex file. Use this in the place of the original hex file");
 }
 
 int main(char argc, char ** argv) {
@@ -255,6 +337,7 @@ int main(char argc, char ** argv) {
 	char * hexfile = 0;
 	char * append_bin_file = 0;
 	char * append_hex_file = 0;
+	char * conv_bin_file = 0;
 
 	for(int i = 1; i < argc; i++) {
 		if(!strcmp(argv[i], "--ob")) flag_output_bin = 1;
@@ -262,18 +345,32 @@ int main(char argc, char ** argv) {
 		else if(!strcmp(argv[i], "--ab") && i < argc) append_bin_file = argv[++i];
 		else if(!strcmp(argv[i], "--ah")) append_hex_file = argv[++i];
 		else if(!strcmp(argv[i], "--oh")) flag_output_hex = 1;
+		else if(!strcmp(argv[i], "-c")) conv_bin_file = argv[++i];
 		else hexfile = argv[i];
 	}
 
-	if(!hexfile) {
+	if(!hexfile && !conv_bin_file) {
 		help();
 		return 3;
 	}
 
-	FILE * fp = fopen(hexfile, "rb");
-	if(!fp) {
-		printf("\n> ERROR: Could not open '%s'", hexfile);
-		return 4;
+	FILE * fp = 0;
+	if(hexfile){
+		/* Open the hex file normally: */
+		fp = fopen(hexfile, "rb");
+		if(!fp) {
+			printf("\n> ERROR: Could not open '%s'", hexfile);
+			return 4;
+		}
+	} else {
+		/* Open the binary file that will be converted into hex instead: */
+		if(conv_bin_file) {
+			fp = fopen((hexfile = conv_bin_file), "rb");
+			if(!fp) {
+				printf("\n> ERROR: Could not open '%s'", hexfile);
+				return 5;
+			}
+		}
 	}
 
 	FILE * fp_append_bin = 0;
@@ -281,7 +378,7 @@ int main(char argc, char ** argv) {
 		fp_append_bin = fopen(append_bin_file, "rb");
 		if(!fp_append_bin) {
 			printf("\n> ERROR: Could not open '%s' (selected by the option --ab)", append_bin_file);
-			return 5;
+			return 6;
 		}
 	}
 
@@ -290,7 +387,7 @@ int main(char argc, char ** argv) {
 		fp_append_hex = fopen(append_hex_file, "rb");
 		if(!fp_append_hex) {
 			printf("\n> ERROR: Could not open '%s' (selected by the option --ah)", append_hex_file);
-			return 6;	
+			return 7;	
 		}
 	}
 
@@ -300,12 +397,19 @@ int main(char argc, char ** argv) {
 	if(fp_append_hex)
 		printf("and '%s' ", append_hex_file);
 	printf("...\n");
-	unsigned int hex_size = filesize(fp);
-	char * hex_contents   = fileread(fp);
+
+	ihex_t * ihex_from_bin = 0;
+	if(conv_bin_file)
+		ihex_from_bin = bin_to_ihex(fileread(fp), filesize(fp));
+
+	unsigned int hex_size = ihex_from_bin ? ihex_total_size(ihex_from_bin) : filesize(fp);
+	char * hex_contents   = ihex_from_bin ? ihex_to_str(ihex_from_bin) : fileread(fp);
 	unsigned int bin_size = fp_append_bin ? filesize(fp_append_bin) : 0;
 	char * append_bin_contents = fp_append_bin ? fileread(fp_append_bin) : 0;
 	unsigned int hex_app_size = fp_append_hex ? filesize(fp_append_hex) : 0;
 	char * append_hex_contents = fp_append_hex ? fileread(fp_append_hex) : 0;
+	if(ihex_from_bin)
+		free_ihex(ihex_from_bin);
 	fclose(fp);
 	if(fp_append_bin) 
 		fclose(fp_append_bin);
@@ -361,8 +465,9 @@ int main(char argc, char ** argv) {
 				output_bin_filename = malloc(sizeof(char) * (dot_idx + 5));
 				strncpy(output_bin_filename, hexfile, dot_idx);
 				memcpy(output_bin_filename+dot_idx, ".bin", 5);
-			} else { 
-				output_bin_filename = hexfile;
+			} else {
+				output_bin_filename = malloc(sizeof(char) * (strlen(hexfile) + 5));
+				sprintf(output_bin_filename, "%s.bin", hexfile);
 			}
 
 			FILE * bin_fp = fopen(output_bin_filename, "wb");
@@ -378,38 +483,14 @@ int main(char argc, char ** argv) {
 			printf("\n> Creating hex output ...");
 			char new_filename[6] = "a.hex";
 			FILE * hex_fp = fopen(new_filename, "wb");
-
-			uint32_t hex_str_size = 0;
-			for(int i = 0; i < ihex->record_count; i++)
-				hex_str_size += 1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2;
-
-			char * hex_str = (char*)malloc(hex_str_size);
-			memset(hex_str, 0, hex_str_size);
-
-			for(int i = 0; i < ihex->record_count; i++) {
-				char * single_rec = malloc(1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2);
-				char * data_str = malloc(ihex->record_list[i].byte_count*2+1);
-				memset(data_str, 1, ihex->record_list[i].byte_count*2+1);
-				for(int j = 0, k = 0; k < ihex->record_list[i].byte_count; j += 2, k++) {
-					char two_digits[3];
-					sprintf(two_digits, "%02X", ihex->record_list[i].data[k]);
-					data_str[j] = two_digits[0];
-					data_str[j+1] = two_digits[1];
-				}
-				data_str[ihex->record_list[i].byte_count*2] = '\0';
-				sprintf(single_rec, ":%02X%04X%02X%s%02X\r\n", ihex->record_list[i].byte_count, ihex->record_list[i].address, ihex->record_list[i].type, data_str, ihex->record_list[i].checksum);
-				strcat(hex_str, single_rec);
-
-				free(data_str);
-				free(single_rec);
-			}
-
-			fwrite(hex_str, hex_str_size, 1, hex_fp);
+			char * hex_str = ihex_to_str(ihex);
+			fwrite(hex_str, ihex_total_size(ihex), 1, hex_fp);
 			fclose(hex_fp);
 			free(hex_str);
 		}
 
 		printf("\n> Cleaning up ...");
+		free(hex_contents);
 		free_ihex(ihex);
 		if(ihex_append) {
 			free(ihex_append->record_list);
