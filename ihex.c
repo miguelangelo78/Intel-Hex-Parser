@@ -16,7 +16,6 @@ enum RECORD_TYPE {
 };
 
 typedef struct record {
-	uint32_t start_off; /* Colon position in the file */
 	uint8_t byte_count;
 	uint16_t address;
 	uint8_t type;
@@ -118,13 +117,18 @@ uint8_t checksum_calculate(char * ihex, uint32_t colon_off, uint32_t data_len) {
 	return (~csum) + 1;
 }
 
-ihex_t * parse_ihex_file(char * hex, unsigned int hex_size) {
+ihex_t * parse_ihex_file(char * hex, unsigned int hex_size, char * append, unsigned int append_size) {
 	ihex_t * ret = 0;
 	uint32_t record_count = 0;
+	/* Count the number of records in the hex file: */
 	for(int i = 0; i < hex_size; i++)
 		if(hex[i] == '\n') 
 			record_count++;
 	
+	/* Allocate more records that will fit the extra binary data being appended: */
+	if(append)
+		record_count += ((append_size-1) / 16) + 1;
+
 	if(record_count) {
 		ret = (ihex_t*)malloc(sizeof(ihex_t));
 		memset(ret, 0, sizeof(ihex_t));
@@ -138,10 +142,9 @@ ihex_t * parse_ihex_file(char * hex, unsigned int hex_size) {
 		for(int i = 0; i < hex_size; i++) {
 			if(hex[i] == ':')  {
 				/* Found the start of a record: */
-				record_t * rec = &ret->record_list[rec_count];
+				record_t * rec = &ret->record_list[type_off(hex, i) == REC_TYPE_EOF ? record_count - 1 : rec_count];
 				
 				/* Collect the data: */
-				rec->start_off = i;
 				rec->byte_count = byte_count_off(hex, i);
 				rec->address = address_off(hex, i);
 				rec->type = type_off(hex, i);
@@ -161,6 +164,38 @@ ihex_t * parse_ihex_file(char * hex, unsigned int hex_size) {
 				rec->checksum = checksum_off(hex, i, rec->byte_count);
 				rec->checksum_calc = checksum_calculate(hex, i, rec->byte_count);
 				rec->checksum_valid = rec->checksum_calc == rec->checksum;
+
+				if(rec->type == REC_TYPE_EOF) { 
+					/* Now we should append the binary file: */
+					int first_null = 0;
+					while(first_null < record_count && ret->record_list[first_null++].type_str);
+
+					if(first_null-- < record_count) {
+						/* Found the record slots for the binary file: */
+						for(int s = 0, acc = 0, bin_rec = first_null; s < append_size; s++) {
+							if(++acc == 16 || s == append_size - 1) {
+								record_t * rec = &ret->record_list[bin_rec];
+
+								rec->byte_count = acc;
+								rec->address = ret->record_list[bin_rec - 1].address + ret->record_list[bin_rec - 1].byte_count + 13;
+								rec->type = REC_TYPE_DATA; /* Data by default */
+								rec->type_str = strdup("Data");
+
+								rec->data = (uint8_t*)malloc(sizeof(uint8_t) * acc);
+								memcpy(rec->data, append + (s-acc) + 1, acc);
+
+								/* Force valid checksum: */
+								rec->checksum      = 0xFE; /* Random value */
+								rec->checksum_calc = 0xFE;
+								rec->checksum_valid = 1;
+
+								bin_rec++;
+								acc = 0;
+							}
+						}
+					}
+				}
+
 				rec_count++;
 			}
 			/* Walk through the rest of the hex file until a colon is found */			
@@ -185,10 +220,14 @@ void dump_ihex(ihex_t * ihex) {
 void free_ihex(ihex_t * ihex) {
 	if(!ihex) return;
 	for(int i = 0; i < ihex->record_count; i++) {
-		if(ihex->record_list[i].byte_count && ihex->record_list[i].data)
+		if(ihex->record_list[i].byte_count && ihex->record_list[i].data) {
 			free(ihex->record_list[i].data);
-		if(ihex->record_list[i].type_str)
+			ihex->record_list[i].data = 0;
+		}
+		if(ihex->record_list[i].type_str) {
 			free(ihex->record_list[i].type_str);
+			ihex->record_list[i].type_str = 0;
+		}
 	}
 	free(ihex->record_list);
 	free(ihex);
@@ -197,7 +236,11 @@ void free_ihex(ihex_t * ihex) {
 
 void help() {
 	printf("\n> Usage: ihex hexfile.hex [options]\n> Options:\n\
-   1: -o Output binary data into file 'hexfile.bin' (the name is a placeholder)\n");
+   1: -h Show Help\n\
+   2: --ob Output binary data into file 'hexfile.bin'\n\
+   3: --oh Output hexadecimal file into a copy file, whether the original hex file was altered or not\n\
+   4: --ab Append binary file into the hex file\n\
+   5: --ah Append hex file into the current hex file");
 }
 
 int main(char argc, char ** argv) {
@@ -208,11 +251,17 @@ int main(char argc, char ** argv) {
 	}
 
 	char flag_output_bin = 0;
+	char flag_output_hex = 0;
 	char * hexfile = 0;
+	char * append_bin_file = 0;
+	char * append_hex_file = 0;
 
 	for(int i = 1; i < argc; i++) {
-		if(!strcmp(argv[i], "-o")) flag_output_bin = 1;
+		if(!strcmp(argv[i], "--ob")) flag_output_bin = 1;
 		else if(!strcmp(argv[i], "-h")) { help(); return 2; }
+		else if(!strcmp(argv[i], "--ab") && i < argc) append_bin_file = argv[++i];
+		else if(!strcmp(argv[i], "--ah")) append_hex_file = argv[++i];
+		else if(!strcmp(argv[i], "--oh")) flag_output_hex = 1;
 		else hexfile = argv[i];
 	}
 
@@ -227,18 +276,82 @@ int main(char argc, char ** argv) {
 		return 4;
 	}
 
-	printf("\n> Loading '%s' ...\n", hexfile);
+	FILE * fp_append_bin = 0;
+	if(append_bin_file) {
+		fp_append_bin = fopen(append_bin_file, "rb");
+		if(!fp_append_bin) {
+			printf("\n> ERROR: Could not open '%s' (selected by the option --ab)", append_bin_file);
+			return 5;
+		}
+	}
+
+	FILE * fp_append_hex = 0;
+	if(append_hex_file) {
+		fp_append_hex = fopen(append_hex_file, "rb");
+		if(!fp_append_hex) {
+			printf("\n> ERROR: Could not open '%s' (selected by the option --ah)", append_hex_file);
+			return 6;	
+		}
+	}
+
+	printf("\n> Loading '%s' ", hexfile);
+	if(fp_append_bin)
+		printf("and '%s' ", append_bin_file);
+	if(fp_append_hex)
+		printf("and '%s' ", append_hex_file);
+	printf("...\n");
 	unsigned int hex_size = filesize(fp);
 	char * hex_contents   = fileread(fp);
+	unsigned int bin_size = fp_append_bin ? filesize(fp_append_bin) : 0;
+	char * append_bin_contents = fp_append_bin ? fileread(fp_append_bin) : 0;
+	unsigned int hex_app_size = fp_append_hex ? filesize(fp_append_hex) : 0;
+	char * append_hex_contents = fp_append_hex ? fileread(fp_append_hex) : 0;
 	fclose(fp);
+	if(fp_append_bin) 
+		fclose(fp_append_bin);
+	if(fp_append_hex)
+		fclose(fp_append_hex);
+	
 	printf("> Parsing '%s' ...\n", hexfile);
-	ihex_t * ihex = parse_ihex_file(hex_contents, hex_size);
+	ihex_t * ihex = parse_ihex_file(hex_contents, hex_size, append_bin_contents, bin_size);
+	ihex_t * ihex_append = 0;
 	if(ihex) {
-		printf("> Parsing Complete!\n> Dumping Intel hex file ...\n");
+		printf("> Parsing Complete!\n");
+		if(append_hex_file && hex_app_size) {
+			printf("> Appending hex file '%s' to '%s' ...", append_hex_file, hexfile);
+			ihex_append = parse_ihex_file(append_hex_contents, hex_app_size, 0, 0);
+			if(ihex_append && ihex_append->record_count) {
+				uint32_t old_record_count = ihex->record_count - 1;
+
+				ihex->record_list = (record_t*)realloc(ihex->record_list, (sizeof(record_t)) * (ihex->record_count + ihex_append->record_count - 1));
+				ihex->record_count += ihex_append->record_count - 1;
+
+				for(int i = old_record_count, j = 0; i < ihex->record_count; i++, j++) {
+					record_t * rec_dst = &ihex->record_list[i];
+					record_t * rec_src = &ihex_append->record_list[j];
+
+					rec_dst->byte_count     = rec_src->byte_count;
+					rec_dst->address        = rec_src->address;
+					rec_dst->type           = rec_src->type;
+					rec_dst->type_str       = rec_src->type_str;
+					rec_dst->data           = rec_src->data;
+					rec_dst->checksum       = rec_src->checksum;
+					rec_dst->checksum_calc  = rec_src->checksum_calc;
+					rec_dst->checksum_valid = rec_src->checksum_valid;
+				}
+			} else {
+				printf(" ERROR: '%s' is not an hex file", append_hex_file);
+			}
+			printf("\n");
+		}
+
+		printf("> Dumping Intel hex file ...\n");
 		dump_ihex(ihex);
+		printf("\n\n> Dump Complete!");
 
 		/* Create binary file: */
 		if(flag_output_bin) {
+			printf("\n> Creating binary output ...");
 			char * dot_pos = strrchr(hexfile,'.');
 			char * output_bin_filename = 0;
 			int dot_idx = 0;
@@ -259,8 +372,51 @@ int main(char argc, char ** argv) {
 				free(output_bin_filename);
 			fclose(bin_fp);
 		}
-		printf("\n\n> Dump Complete!\n> Cleaning up ...");
+
+		/* Create hex file: */
+		if(flag_output_hex) {
+			printf("\n> Creating hex output ...");
+			char new_filename[6] = "a.hex";
+			FILE * hex_fp = fopen(new_filename, "wb");
+
+			uint32_t hex_str_size = 0;
+			for(int i = 0; i < ihex->record_count; i++)
+				hex_str_size += 1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2;
+
+			char * hex_str = (char*)malloc(hex_str_size);
+			memset(hex_str, 0, hex_str_size);
+
+			for(int i = 0; i < ihex->record_count; i++) {
+				char * single_rec = malloc(1+2+4+2+(ihex->record_list[i].byte_count*2)+2+2);
+				char * data_str = malloc(ihex->record_list[i].byte_count*2+1);
+				memset(data_str, 1, ihex->record_list[i].byte_count*2+1);
+				for(int j = 0, k = 0; k < ihex->record_list[i].byte_count; j += 2, k++) {
+					char two_digits[3];
+					sprintf(two_digits, "%02X", ihex->record_list[i].data[k]);
+					data_str[j] = two_digits[0];
+					data_str[j+1] = two_digits[1];
+				}
+				data_str[ihex->record_list[i].byte_count*2] = '\0';
+				sprintf(single_rec, ":%02X%04X%02X%s%02X\r\n", ihex->record_list[i].byte_count, ihex->record_list[i].address, ihex->record_list[i].type, data_str, ihex->record_list[i].checksum);
+				strcat(hex_str, single_rec);
+
+				free(data_str);
+				free(single_rec);
+			}
+
+			fwrite(hex_str, hex_str_size, 1, hex_fp);
+			fclose(hex_fp);
+			free(hex_str);
+		}
+
+		printf("\n> Cleaning up ...");
 		free_ihex(ihex);
+		if(ihex_append) {
+			free(ihex_append->record_list);
+			free(ihex_append);
+		}
+	} else {
+		printf("> ERROR: '%s' is not an hex file", hexfile);
 	}
 
 	printf("\n\nExiting...");
