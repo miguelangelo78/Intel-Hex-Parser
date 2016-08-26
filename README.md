@@ -3,7 +3,7 @@ This is a small utility program for parsing Intel Hex files and to dump the data
 
 # How to Compile
 
-Simply run **`build.bat`** on Windows, or just simply run **`make -f makefile all`**
+Simply run **`build.bat`** on Windows, or just run **`make -f makefile all`** on any other Platform.
 
 # How to Use
 
