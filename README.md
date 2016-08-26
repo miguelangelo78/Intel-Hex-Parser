@@ -23,6 +23,9 @@ Example: **`ihex myfile.hex --oh`**
 * Remember that you can combine these flags. For example, if you wish to append one hex file and a binary into the original file, and want to get the result exported into a new file, just do:  
 **`ihex myfile.hex --ab mybinary.bin --ah anotherhex.hex --oh`**
 
+* This will create a new file called a.hex which you should rename to whatever you want. The result is a total of 3 files joined together.
+* If you want to add more complexity, you can call the program multiple times, each call with different flags, which will allow you to make a complex and large hex file with a lot of information.
+
 **Another example**:  
 1. **`ihex -c mybinary.bin --oh`** -> Converts from binary to Intel Hex and generates Hex output file  
 2. **`ihex a.hex --ob`** -> Converts the previous generated hex file back into a binary file that is equal to 'mybinary.bin'.  
@@ -30,6 +33,3 @@ Example: **`ihex myfile.hex --oh`**
 **More examples**:  
 1. **`ihex myhex.hex --ob`** -> Convert from hex to binary 'myhex.bin'  
 2. **`ihex -c myhex.bin --oh`** -> Convert again the generated binary into the previous hex file.  
-
-* This will create a new file called a.hex which you should rename to whatever you want. The result is a total of 3 files joined together.
-* If you want to add more complexity, you can call the program multiple times, each call with different flags, which will allow you to make a complex and large hex file with a lot of information.
