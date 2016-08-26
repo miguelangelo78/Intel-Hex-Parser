@@ -184,9 +184,11 @@ ihex_t * parse_ihex_file(char * hex, unsigned int hex_size, char * append, unsig
 								rec->data = (uint8_t*)malloc(sizeof(uint8_t) * acc);
 								memcpy(rec->data, append + (s-acc) + 1, acc);
 
-								/* Force valid checksum: */
-								rec->checksum      = 0xFE; /* Random value */
-								rec->checksum_calc = 0xFE;
+								uint8_t data_sum = 0;
+								for(int di = 0; di < rec->byte_count; di++)
+									data_sum += rec->data[di];
+								rec->checksum       = ~(rec->byte_count + ((rec->address & 0xFF00) >> 8) + (rec->address & 0xFF) + rec->type + data_sum) + 1;
+								rec->checksum_calc  = rec->checksum;
 								rec->checksum_valid = 1;
 
 								bin_rec++;
