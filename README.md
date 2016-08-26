@@ -13,7 +13,7 @@ Simply run **`build.bat`** on Windows, or just simply run **`make -f makefile al
 
 The complete list of options are:
 > 1. **`-h`** > Show help on the screen. Example: **`ihex -h`**
-> 2. **`--ob**`** > Output hex file's data into binary file. Example: **`ihex myfile.hex --ob`**
+> 2. **`--ob`** > Output hex file's data into binary file. Example: **`ihex myfile.hex --ob`**
 > 3. **`--oh`** > Output original (or modified with the flags) hex file into a new file called 'a.hex'. Example: **`ihex myfile.hex --oh`**
 >4. **`--ah`** > Append hex file with the current hex file. Example: **`ihex myfile.hex --ah newfile_to_append.hex`**
 >5. **`--ab`** > Append binary file with the current hex file. New records will actually be created on the current hex file just so it can fit the new binary data. Example: **`ihex myfile.hex --ab mybinary_to_append.bin`**
